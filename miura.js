@@ -5,12 +5,14 @@
 const STORAGE_KEY = 'miura-ori-settings';
 
 const DEFAULTS = {
-  cellWidth:  40,
-  cellHeight: 30,
-  cols:        8,
-  rows:        6,
-  angle:      60,
-  colorMode: false,
+  cellWidth:     40,
+  cellHeight:    30,
+  cols:           8,
+  rows:           6,
+  angle:         60,
+  colorMode:    false,
+  smoothEnabled: false,
+  smoothWidth:   10,
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -21,26 +23,18 @@ let state = Object.assign({}, DEFAULTS);
 
 // ── Algorithm ─────────────────────────────────────────────────────────────────
 
-/**
- * Clamp angle to [10°, 90°]. At 90° tan() is ~1.6e16 in JS so dx ≈ 0 (vertical zigzags).
- */
 function clampAngle(deg) {
   return Math.max(10, Math.min(90, deg));
 }
 
 /**
- * Compute the Miura-ori crease pattern from the current state.
- * Returns { edges: [{x1,y1,x2,y2,type}], width, height }
- *
- * Vertex(row j, col i):
- *   x = i * cw + (j odd ? dx : 0)
- *   y = j * dy
- *
- * Fold classification:
- *   Horizontal at even row → valley
- *   Horizontal at odd row  → mountain
- *   Diagonal right (x2>x1) → mountain
- *   Diagonal left  (x2<x1) → valley
+ * Returns:
+ *   hEdges   — horizontal fold segments with type
+ *   dCols    — diagonal columns: [{pts:[{x,y}…], type}]
+ *   rightCol — right boundary column vertices, j=0→R
+ *   leftCol  — left  boundary column vertices, j=R→0
+ *   topLeft, topRight, botLeft — boundary corner points
+ *   width, height
  */
 function computePattern(s) {
   const cw = s.cellWidth;
@@ -51,125 +45,165 @@ function computePattern(s) {
   const dx = ch / Math.tan(alpha);
   const dy = ch;
 
-  // Build vertex grid
   const vx = (j, i) => i * cw + (j % 2 === 1 ? dx : 0);
   const vy = (j)    => j * dy;
 
-  const edges = [];
-
-  // Horizontal edges: row j, col i → i+1
-  // Segments alternate M/V within each row; row parity sets the starting type.
-  // type = mountain if (i + j) is even, valley if odd.
+  // Horizontal edges — checkerboard mountain/valley
+  const hEdges = [];
   for (let j = 0; j <= R; j++) {
     for (let i = 0; i < C; i++) {
-      const x1 = vx(j, i),   y1 = vy(j);
-      const x2 = vx(j, i+1), y2 = vy(j);
       const type = ((i + j) % 2 === 0) ? 'mountain' : 'valley';
-      edges.push({ x1, y1, x2, y2, type });
+      hEdges.push({ x1: vx(j,i), y1: vy(j), x2: vx(j,i+1), y2: vy(j), type });
     }
   }
 
-  // Diagonal edges: (j,i) → (j+1,i)
-  // Each zigzag column i is uniformly one type for its full height:
-  // even column index → valley, odd column index → mountain.
-  for (let j = 0; j < R; j++) {
-    for (let i = 0; i <= C; i++) {
-      const x1 = vx(j,   i), y1 = vy(j);
-      const x2 = vx(j+1, i), y2 = vy(j+1);
-      const type = (i % 2 === 0) ? 'valley' : 'mountain';
-      edges.push({ x1, y1, x2, y2, type });
-    }
+  // Diagonal columns — each column i is uniformly one type
+  const dCols = [];
+  for (let i = 0; i <= C; i++) {
+    const pts = [];
+    for (let j = 0; j <= R; j++) pts.push({ x: vx(j, i), y: vy(j) });
+    dCols.push({ pts, type: (i % 2 === 0) ? 'valley' : 'mountain' });
   }
 
   const width  = C * cw + dx;
   const height = R * dy;
 
-  // Outer boundary: straight top/bottom, zigzag left (col 0) and right (col C)
-  const boundaryPts = [];
-  boundaryPts.push([vx(0, 0), vy(0)]);              // top-left
-  boundaryPts.push([vx(0, C), vy(0)]);              // top-right
-  for (let j = 1; j <= R; j++)                       // right zigzag ↓
-    boundaryPts.push([vx(j, C), vy(j)]);
-  boundaryPts.push([vx(R, 0), vy(R)]);              // bottom-left
-  for (let j = R - 1; j >= 1; j--)                  // left zigzag ↑
-    boundaryPts.push([vx(j, 0), vy(j)]);
+  // Boundary columns for the outline polygon
+  const rightCol = [];
+  for (let j = 0; j <= R; j++) rightCol.push({ x: vx(j, C), y: vy(j) });
+  const leftCol = [];
+  for (let j = R; j >= 0; j--) leftCol.push({ x: vx(j, 0), y: vy(j) });
 
-  return { edges, width, height, boundaryPts };
+  const topLeft  = { x: vx(0, 0), y: vy(0) };
+  const topRight = { x: vx(0, C), y: vy(0) };
+  const botLeft  = { x: vx(R, 0), y: vy(R) };
+
+  return { hEdges, dCols, rightCol, leftCol, topLeft, topRight, botLeft, width, height };
 }
 
-// ── SVG Helpers ───────────────────────────────────────────────────────────────
+// ── SVG helpers ───────────────────────────────────────────────────────────────
 
 function makeSVGEl(tag, attrs) {
   const el = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    el.setAttribute(k, v);
-  }
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 }
 
-/**
- * Return inline stroke attributes for a fold edge.
- * colorMode=false → all black solid lines
- * colorMode=true  → mountain=red solid, valley=blue dashed
- */
 function getLineStyle(type, colorMode) {
-  if (!colorMode) {
+  if (!colorMode)
     return { stroke: '#222', 'stroke-width': '0.5', 'stroke-dasharray': 'none' };
-  }
-  if (type === 'mountain') {
+  if (type === 'mountain')
     return { stroke: '#c0392b', 'stroke-width': '0.5', 'stroke-dasharray': 'none' };
-  }
-  // valley
   return { stroke: '#2980b9', 'stroke-width': '0.5', 'stroke-dasharray': '4 3' };
+}
+
+// ── Path building ─────────────────────────────────────────────────────────────
+
+/**
+ * Returns path segment commands (L / Q) starting from pts[1].
+ * The caller must have already moved to pts[0].
+ * Interior vertices (1 … n-2) get a quadratic Bézier rounded corner;
+ * boundary vertices get a plain L.
+ * W is the total arc-length of the smooth region around each corner.
+ */
+function buildColSegments(pts, W) {
+  const n = pts.length;
+  let d = '';
+  for (let j = 1; j < n; j++) {
+    const isInterior = j < n - 1;   // first and last are not rounded
+    if (W <= 0 || !isInterior) {
+      d += ` L ${pts[j].x.toFixed(4)} ${pts[j].y.toFixed(4)}`;
+      continue;
+    }
+    const prev = pts[j - 1], curr = pts[j], next = pts[j + 1];
+
+    const dxIn = curr.x - prev.x, dyIn = curr.y - prev.y;
+    const lIn  = Math.sqrt(dxIn * dxIn + dyIn * dyIn);
+    const uxIn = dxIn / lIn,  uyIn = dyIn / lIn;
+
+    const dxOut = next.x - curr.x, dyOut = next.y - curr.y;
+    const lOut  = Math.sqrt(dxOut * dxOut + dyOut * dyOut);
+    const uxOut = dxOut / lOut, uyOut = dyOut / lOut;
+
+    // Clamp half-width so adjacent curves never overlap
+    const w = Math.min(W / 2, lIn * 0.45, lOut * 0.45);
+
+    const p1x = curr.x - w * uxIn,  p1y = curr.y - w * uyIn;
+    const p2x = curr.x + w * uxOut, p2y = curr.y + w * uyOut;
+
+    d += ` L ${p1x.toFixed(4)} ${p1y.toFixed(4)}`;
+    d += ` Q ${curr.x.toFixed(4)} ${curr.y.toFixed(4)} ${p2x.toFixed(4)} ${p2y.toFixed(4)}`;
+  }
+  return d;
+}
+
+function buildColPath(pts, W) {
+  if (!pts.length) return '';
+  return `M ${pts[0].x.toFixed(4)} ${pts[0].y.toFixed(4)}` + buildColSegments(pts, W);
+}
+
+/**
+ * Closed boundary path:
+ *   straight top edge → smooth right zigzag → straight bottom edge → smooth left zigzag
+ * The four outer corners (topLeft, topRight, botRight, botLeft) are NOT rounded.
+ */
+function buildBoundaryPath(topLeft, topRight, botLeft, rightCol, leftCol, W) {
+  let d = `M ${topLeft.x.toFixed(4)} ${topLeft.y.toFixed(4)}`;
+  d += ` L ${topRight.x.toFixed(4)} ${topRight.y.toFixed(4)}`;  // top edge
+  d += buildColSegments(rightCol, W);                             // right zigzag ↓
+  d += ` L ${botLeft.x.toFixed(4)} ${botLeft.y.toFixed(4)}`;    // bottom edge
+  d += buildColSegments(leftCol, W);                              // left zigzag ↑
+  d += ' Z';
+  return d;
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 function renderPattern() {
   const svg = document.getElementById('crease-svg');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-  // Clear previous content
-  while (svg.firstChild) {
-    svg.removeChild(svg.firstChild);
-  }
-
-  const { edges, width, height, boundaryPts } = computePattern(state);
+  const { hEdges, dCols, rightCol, leftCol,
+          topLeft, topRight, botLeft, width, height } = computePattern(state);
   const pad = 4;
 
-  svg.setAttribute('viewBox', `${-pad} ${-pad} ${(width + pad * 2).toFixed(4)} ${(height + pad * 2).toFixed(4)}`);
+  svg.setAttribute('viewBox',
+    `${-pad} ${-pad} ${(width + pad * 2).toFixed(4)} ${(height + pad * 2).toFixed(4)}`);
 
-  // White background (for clean SVG export)
-  const bg = makeSVGEl('rect', {
-    x: (-pad).toString(),
-    y: (-pad).toString(),
-    width:  (width  + pad * 2).toFixed(4),
-    height: (height + pad * 2).toFixed(4),
+  // White background
+  svg.appendChild(makeSVGEl('rect', {
+    x: (-pad).toString(), y: (-pad).toString(),
+    width: (width + pad * 2).toFixed(4), height: (height + pad * 2).toFixed(4),
     fill: '#ffffff',
-  });
-  svg.appendChild(bg);
+  }));
 
-  // Draw each edge
-  for (const e of edges) {
-    const styleAttrs = getLineStyle(e.type, state.colorMode);
-    const line = makeSVGEl('line', {
-      x1: e.x1.toFixed(4),
-      y1: e.y1.toFixed(4),
-      x2: e.x2.toFixed(4),
-      y2: e.y2.toFixed(4),
-      ...styleAttrs,
-    });
-    svg.appendChild(line);
+  // Horizontal fold edges
+  for (const e of hEdges) {
+    svg.appendChild(makeSVGEl('line', {
+      x1: e.x1.toFixed(4), y1: e.y1.toFixed(4),
+      x2: e.x2.toFixed(4), y2: e.y2.toFixed(4),
+      ...getLineStyle(e.type, state.colorMode),
+    }));
   }
 
-  // Outer boundary: follows the actual zigzag edges on left and right
-  const border = makeSVGEl('polygon', {
-    points: boundaryPts.map(([x, y]) => `${x.toFixed(4)},${y.toFixed(4)}`).join(' '),
-    fill:   'none',
+  // Diagonal columns — smooth when enabled
+  const W = state.smoothEnabled ? state.smoothWidth : 0;
+  for (const col of dCols) {
+    svg.appendChild(makeSVGEl('path', {
+      d:    buildColPath(col.pts, W),
+      fill: 'none',
+      ...getLineStyle(col.type, state.colorMode),
+    }));
+  }
+
+  // Outer boundary
+  svg.appendChild(makeSVGEl('path', {
+    d:    buildBoundaryPath(topLeft, topRight, botLeft, rightCol, leftCol, W),
+    fill: 'none',
     stroke: '#000',
     'stroke-width': '1',
     'stroke-linejoin': 'miter',
-  });
-  svg.appendChild(border);
+  }));
 }
 
 // ── localStorage ──────────────────────────────────────────────────────────────
@@ -179,59 +213,45 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const saved = JSON.parse(raw);
-    // Only apply keys that exist in DEFAULTS, ignore stale/unknown entries
     for (const key of Object.keys(DEFAULTS)) {
-      if (key in saved) {
-        state[key] = saved[key];
-      }
+      if (key in saved) state[key] = saved[key];
     }
-  } catch (_) {
-    // Silently ignore parse errors or missing localStorage
-  }
+  } catch (_) {}
 }
 
 function saveState() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (_) {
-    // Ignore quota errors
-  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
 }
 
 // ── Control sync ──────────────────────────────────────────────────────────────
 
 function syncControlsToState() {
-  document.getElementById('cellWidth').value  = state.cellWidth;
-  document.getElementById('cellHeight').value = state.cellHeight;
-  document.getElementById('cols').value       = state.cols;
-  document.getElementById('rows').value       = state.rows;
-  document.getElementById('angle').value      = state.angle;
-  document.getElementById('colorMode').checked = state.colorMode;
-
+  document.getElementById('cellWidth').value    = state.cellWidth;
+  document.getElementById('cellHeight').value   = state.cellHeight;
+  document.getElementById('cols').value         = state.cols;
+  document.getElementById('rows').value         = state.rows;
+  document.getElementById('angle').value        = state.angle;
+  document.getElementById('smoothWidth').value  = state.smoothWidth;
+  document.getElementById('colorMode').checked    = state.colorMode;
+  document.getElementById('smoothEnabled').checked = state.smoothEnabled;
+  document.getElementById('smoothWidthGroup').style.display =
+    state.smoothEnabled ? 'flex' : 'none';
   updateDisplays();
 }
 
 function updateDisplays() {
-  document.getElementById('cellWidth-num').value  = state.cellWidth;
-  document.getElementById('cellHeight-num').value = state.cellHeight;
-  document.getElementById('cols-num').value       = state.cols;
-  document.getElementById('rows-num').value       = state.rows;
-  document.getElementById('angle-num').value      = state.angle;
-}
-
-function readControlsToState() {
-  state.cellWidth  = parseInt(document.getElementById('cellWidth').value,  10);
-  state.cellHeight = parseInt(document.getElementById('cellHeight').value, 10);
-  state.cols       = parseInt(document.getElementById('cols').value,       10);
-  state.rows       = parseInt(document.getElementById('rows').value,       10);
-  state.angle      = parseInt(document.getElementById('angle').value,      10);
-  state.colorMode  = document.getElementById('colorMode').checked;
+  document.getElementById('cellWidth-num').value   = state.cellWidth;
+  document.getElementById('cellHeight-num').value  = state.cellHeight;
+  document.getElementById('cols-num').value        = state.cols;
+  document.getElementById('rows-num').value        = state.rows;
+  document.getElementById('angle-num').value       = state.angle;
+  document.getElementById('smoothWidth-num').value = state.smoothWidth;
 }
 
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 function onSliderInput(event) {
-  const id = event.target.id;
+  const id  = event.target.id;
   const val = parseInt(event.target.value, 10);
   state[id] = val;
   const numEl = document.getElementById(id + '-num');
@@ -241,9 +261,9 @@ function onSliderInput(event) {
 }
 
 function onNumberInput(event) {
-  const el = event.target;
-  const id = el.id.replace('-num', '');
-  let val = parseInt(el.value, 10);
+  const el  = event.target;
+  const id  = el.id.replace('-num', '');
+  let   val = parseInt(el.value, 10);
   if (isNaN(val)) return;
   val = Math.max(parseInt(el.min, 10), Math.min(parseInt(el.max, 10), val));
   el.value = val;
@@ -259,34 +279,35 @@ function onToggleChange() {
   renderPattern();
 }
 
+function onSmoothToggle() {
+  state.smoothEnabled = document.getElementById('smoothEnabled').checked;
+  document.getElementById('smoothWidthGroup').style.display =
+    state.smoothEnabled ? 'flex' : 'none';
+  saveState();
+  renderPattern();
+}
+
 function onExport() {
   const svg = document.getElementById('crease-svg');
-  const serializer = new XMLSerializer();
-  const svgStr = serializer.serializeToString(svg);
-  const xmlDecl = '<?xml version="1.0" encoding="UTF-8"?>\n';
-  const blob = new Blob([xmlDecl + svgStr], { type: 'image/svg+xml' });
+  const svgStr = new XMLSerializer().serializeToString(svg);
+  const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + svgStr],
+                        { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);
-
   const a = document.createElement('a');
-  a.href = url;
-  a.download = 'miura-ori.svg';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-
+  a.href = url; a.download = 'miura-ori.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ── Event binding ─────────────────────────────────────────────────────────────
 
 function bindEvents() {
-  const sliderIds = ['cellWidth', 'cellHeight', 'cols', 'rows', 'angle'];
-  for (const id of sliderIds) {
+  for (const id of ['cellWidth', 'cellHeight', 'cols', 'rows', 'angle', 'smoothWidth']) {
     document.getElementById(id).addEventListener('input', onSliderInput);
     document.getElementById(id + '-num').addEventListener('change', onNumberInput);
   }
-
   document.getElementById('colorMode').addEventListener('change', onToggleChange);
+  document.getElementById('smoothEnabled').addEventListener('change', onSmoothToggle);
   document.getElementById('exportBtn').addEventListener('click', onExport);
 }
 
