@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Miura-ori Pattern Generator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="controls">
+    <h1>Miura-ori</h1>
+
+    <div class="control-group">
+      <label for="cellWidth">Cell Width</label>
+      <div class="slider-row">
+        <input type="range" id="cellWidth" min="10" max="200" step="1" value="40">
+        <span class="value-display" id="cellWidth-display">40 px</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label for="cellHeight">Cell Height</label>
+      <div class="slider-row">
+        <input type="range" id="cellHeight" min="10" max="200" step="1" value="30">
+        <span class="value-display" id="cellHeight-display">30 px</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label for="cols">Columns</label>
+      <div class="slider-row">
+        <input type="range" id="cols" min="1" max="30" step="1" value="8">
+        <span class="value-display" id="cols-display">8</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label for="rows">Rows</label>
+      <div class="slider-row">
+        <input type="range" id="rows" min="1" max="30" step="1" value="6">
+        <span class="value-display" id="rows-display">6</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label for="angle">Skew Angle</label>
+      <div class="slider-row">
+        <input type="range" id="angle" min="10" max="80" step="1" value="60">
+        <span class="value-display" id="angle-display">60°</span>
+      </div>
+    </div>
+
+    <div class="control-group toggle-group">
+      <label class="toggle-label" for="colorMode">
+        <input type="checkbox" id="colorMode">
+        Mountain / Valley Colors
+      </label>
+    </div>
+
+    <button id="exportBtn">Export SVG</button>
+  </div>
+
+  <div id="preview">
+    <svg id="crease-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <script src="miura.js"></script>
+</body>
+</html>
