@@ -48,12 +48,25 @@ function computePattern(s) {
   const vx = (j, i) => i * cw + (j % 2 === 1 ? dx : 0);
   const vy = (j)    => j * dy;
 
+  // Horizontal adjustment so segments meet the smooth diagonal curves.
+  // The Bézier at an interior vertex crosses y=j·dy at x = V.x ± w_eff·dx/(2·L).
+  // Even rows shift right (+), odd rows shift left (−).
+  // Boundary rows (j=0 and j=R) have no curve, so no shift.
+  let hShift = 0;
+  if (s.smoothEnabled && s.smoothWidth > 0) {
+    const Lseg = Math.sqrt(dx * dx + dy * dy);
+    const wEff = Math.min(s.smoothWidth / 2, Lseg * 0.45);
+    hShift = wEff * dx / (2 * Lseg);
+  }
+
   // Horizontal edges — checkerboard mountain/valley
   const hEdges = [];
   for (let j = 0; j <= R; j++) {
+    const isInterior = j > 0 && j < R;
+    const xShift = isInterior ? (j % 2 === 0 ? hShift : -hShift) : 0;
     for (let i = 0; i < C; i++) {
       const type = ((i + j) % 2 === 0) ? 'mountain' : 'valley';
-      hEdges.push({ x1: vx(j,i), y1: vy(j), x2: vx(j,i+1), y2: vy(j), type });
+      hEdges.push({ x1: vx(j,i) + xShift, y1: vy(j), x2: vx(j,i+1) + xShift, y2: vy(j), type });
     }
   }
 
