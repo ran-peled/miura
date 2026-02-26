@@ -14,7 +14,8 @@
       <label for="cellWidth">Cell Width</label>
       <div class="slider-row">
         <input type="range" id="cellWidth" min="10" max="200" step="1" value="40">
-        <span class="value-display" id="cellWidth-display">40 px</span>
+        <input type="number" class="value-input" id="cellWidth-num" min="10" max="200" step="1" value="40">
+        <span class="unit-label">px</span>
       </div>
     </div>
 
@@ -22,7 +23,8 @@
       <label for="cellHeight">Cell Height</label>
       <div class="slider-row">
         <input type="range" id="cellHeight" min="10" max="200" step="1" value="30">
-        <span class="value-display" id="cellHeight-display">30 px</span>
+        <input type="number" class="value-input" id="cellHeight-num" min="10" max="200" step="1" value="30">
+        <span class="unit-label">px</span>
       </div>
     </div>
 
@@ -30,7 +32,7 @@
       <label for="cols">Columns</label>
       <div class="slider-row">
         <input type="range" id="cols" min="1" max="30" step="1" value="8">
-        <span class="value-display" id="cols-display">8</span>
+        <input type="number" class="value-input" id="cols-num" min="1" max="30" step="1" value="8">
       </div>
     </div>
 
@@ -38,15 +40,16 @@
       <label for="rows">Rows</label>
       <div class="slider-row">
         <input type="range" id="rows" min="1" max="30" step="1" value="6">
-        <span class="value-display" id="rows-display">6</span>
+        <input type="number" class="value-input" id="rows-num" min="1" max="30" step="1" value="6">
       </div>
     </div>
 
     <div class="control-group">
       <label for="angle">Skew Angle</label>
       <div class="slider-row">
-        <input type="range" id="angle" min="10" max="80" step="1" value="60">
-        <span class="value-display" id="angle-display">60°</span>
+        <input type="range" id="angle" min="10" max="90" step="1" value="60">
+        <input type="number" class="value-input" id="angle-num" min="10" max="90" step="1" value="60">
+        <span class="unit-label">°</span>
       </div>
     </div>
 

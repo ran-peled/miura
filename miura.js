@@ -22,10 +22,10 @@ let state = Object.assign({}, DEFAULTS);
 // ── Algorithm ─────────────────────────────────────────────────────────────────
 
 /**
- * Clamp angle to [10°, 80°] so tan(α) stays finite and dx is meaningful.
+ * Clamp angle to [10°, 90°]. At 90° tan() is ~1.6e16 in JS so dx ≈ 0 (vertical zigzags).
  */
 function clampAngle(deg) {
-  return Math.max(10, Math.min(80, deg));
+  return Math.max(10, Math.min(90, deg));
 }
 
 /**
@@ -84,7 +84,17 @@ function computePattern(s) {
   const width  = C * cw + dx;
   const height = R * dy;
 
-  return { edges, width, height };
+  // Outer boundary: straight top/bottom, zigzag left (col 0) and right (col C)
+  const boundaryPts = [];
+  boundaryPts.push([vx(0, 0), vy(0)]);              // top-left
+  boundaryPts.push([vx(0, C), vy(0)]);              // top-right
+  for (let j = 1; j <= R; j++)                       // right zigzag ↓
+    boundaryPts.push([vx(j, C), vy(j)]);
+  boundaryPts.push([vx(R, 0), vy(R)]);              // bottom-left
+  for (let j = R - 1; j >= 1; j--)                  // left zigzag ↑
+    boundaryPts.push([vx(j, 0), vy(j)]);
+
+  return { edges, width, height, boundaryPts };
 }
 
 // ── SVG Helpers ───────────────────────────────────────────────────────────────
@@ -104,13 +114,13 @@ function makeSVGEl(tag, attrs) {
  */
 function getLineStyle(type, colorMode) {
   if (!colorMode) {
-    return { stroke: '#222', 'stroke-width': '1', 'stroke-dasharray': 'none' };
+    return { stroke: '#222', 'stroke-width': '0.5', 'stroke-dasharray': 'none' };
   }
   if (type === 'mountain') {
-    return { stroke: '#c0392b', 'stroke-width': '1.2', 'stroke-dasharray': 'none' };
+    return { stroke: '#c0392b', 'stroke-width': '0.5', 'stroke-dasharray': 'none' };
   }
   // valley
-  return { stroke: '#2980b9', 'stroke-width': '1', 'stroke-dasharray': '4 3' };
+  return { stroke: '#2980b9', 'stroke-width': '0.5', 'stroke-dasharray': '4 3' };
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -123,7 +133,7 @@ function renderPattern() {
     svg.removeChild(svg.firstChild);
   }
 
-  const { edges, width, height } = computePattern(state);
+  const { edges, width, height, boundaryPts } = computePattern(state);
   const pad = 4;
 
   svg.setAttribute('viewBox', `${-pad} ${-pad} ${(width + pad * 2).toFixed(4)} ${(height + pad * 2).toFixed(4)}`);
@@ -150,6 +160,16 @@ function renderPattern() {
     });
     svg.appendChild(line);
   }
+
+  // Outer boundary: follows the actual zigzag edges on left and right
+  const border = makeSVGEl('polygon', {
+    points: boundaryPts.map(([x, y]) => `${x.toFixed(4)},${y.toFixed(4)}`).join(' '),
+    fill:   'none',
+    stroke: '#000',
+    'stroke-width': '1',
+    'stroke-linejoin': 'miter',
+  });
+  svg.appendChild(border);
 }
 
 // ── localStorage ──────────────────────────────────────────────────────────────
@@ -192,11 +212,11 @@ function syncControlsToState() {
 }
 
 function updateDisplays() {
-  document.getElementById('cellWidth-display').textContent  = state.cellWidth  + ' px';
-  document.getElementById('cellHeight-display').textContent = state.cellHeight + ' px';
-  document.getElementById('cols-display').textContent       = state.cols;
-  document.getElementById('rows-display').textContent       = state.rows;
-  document.getElementById('angle-display').textContent      = state.angle + '°';
+  document.getElementById('cellWidth-num').value  = state.cellWidth;
+  document.getElementById('cellHeight-num').value = state.cellHeight;
+  document.getElementById('cols-num').value       = state.cols;
+  document.getElementById('rows-num').value       = state.rows;
+  document.getElementById('angle-num').value      = state.angle;
 }
 
 function readControlsToState() {
@@ -213,21 +233,22 @@ function readControlsToState() {
 function onSliderInput(event) {
   const id = event.target.id;
   const val = parseInt(event.target.value, 10);
-
   state[id] = val;
+  const numEl = document.getElementById(id + '-num');
+  if (numEl) numEl.value = val;
+  saveState();
+  renderPattern();
+}
 
-  // Update display span
-  const displayEl = document.getElementById(id + '-display');
-  if (displayEl) {
-    if (id === 'cellWidth' || id === 'cellHeight') {
-      displayEl.textContent = val + ' px';
-    } else if (id === 'angle') {
-      displayEl.textContent = val + '°';
-    } else {
-      displayEl.textContent = val;
-    }
-  }
-
+function onNumberInput(event) {
+  const el = event.target;
+  const id = el.id.replace('-num', '');
+  let val = parseInt(el.value, 10);
+  if (isNaN(val)) return;
+  val = Math.max(parseInt(el.min, 10), Math.min(parseInt(el.max, 10), val));
+  el.value = val;
+  state[id] = val;
+  document.getElementById(id).value = val;
   saveState();
   renderPattern();
 }
@@ -262,6 +283,7 @@ function bindEvents() {
   const sliderIds = ['cellWidth', 'cellHeight', 'cols', 'rows', 'angle'];
   for (const id of sliderIds) {
     document.getElementById(id).addEventListener('input', onSliderInput);
+    document.getElementById(id + '-num').addEventListener('change', onNumberInput);
   }
 
   document.getElementById('colorMode').addEventListener('change', onToggleChange);
